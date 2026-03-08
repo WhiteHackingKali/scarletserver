@@ -1,212 +1,162 @@
-const express = require("express");
-const http = require("http");
 const WebSocket = require("ws");
-const cors = require("cors");
+const http = require("http");
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const server = http.createServer(app);
+const server = http.createServer();
 const wss = new WebSocket.Server({ server });
 
-const dashboardClients = new Set();
-const gameClients = new Set();
+let dashboards = new Set();
+let executors = new Set();
 
-console.log("=================================");
-console.log(" Scarlet Panel Debug Server");
-console.log("=================================");
+function send(ws, type, data = {}) {
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type,
+            data,
+            timestamp: Date.now()
+        }));
+    }
+}
 
-wss.on("connection", (ws, req) => {
+function broadcastExecutors(type, data) {
+    executors.forEach(ws => send(ws, type, data));
+}
 
-    const ip = req.socket.remoteAddress;
+function broadcastDashboards(type, data) {
+    dashboards.forEach(ws => send(ws, type, data));
+}
 
-    console.log("\n[NEW CONNECTION]", ip);
+wss.on("connection", (ws) => {
 
-    ws.on("message", (data) => {
+    console.log("🔌 Nova conexão");
 
-        const raw = data.toString();
-
-        console.log("\n[RAW MESSAGE]");
-        console.log(raw);
+    ws.on("message", (raw) => {
 
         let msg;
 
         try {
             msg = JSON.parse(raw);
-        } catch (err) {
-            console.log("[ERROR] JSON inválido");
+        } catch {
+            console.log("⚠️ JSON inválido:", raw.toString());
             return;
         }
 
-        console.log("[PARSED MESSAGE]", msg);
+        const { type, data } = msg;
 
-        switch (msg.type) {
+        console.log("📩", type, data);
 
-            // ======================
-            // IDENTIFY
-            // ======================
+        switch (type) {
 
-            case "identify":
+            // Dashboard autentica
+            case "auth": {
 
-                if (msg.client === "dashboard") {
+                ws.role = "dashboard";
+                dashboards.add(ws);
 
-                    dashboardClients.add(ws);
-                    ws.clientType = "dashboard";
+                console.log("🖥 Dashboard conectado:", data?.email);
 
-                    console.log("[DASHBOARD CONNECTED]");
-                    console.log("Dashboards:", dashboardClients.size);
+                send(ws, "status", {
+                    connectedExecutors: executors.size
+                });
+
+                break;
+            }
+
+            // Executor Roblox identifica
+            case "identify": {
+
+                ws.role = "executor";
+                executors.add(ws);
+
+                console.log("🎮 Executor conectado");
+
+                broadcastDashboards("status", {
+                    connectedExecutors: executors.size
+                });
+
+                break;
+            }
+
+            // comandos do dashboard
+            case "command": {
+
+                const command = data?.command;
+
+                console.log("⚡ Command:", command);
+
+                if (command === "ping") {
+
+                    broadcastExecutors("ping");
+
+                    send(ws, "log", {
+                        message: "Ping enviado aos executores"
+                    });
 
                 }
 
-                if (msg.client === "game") {
+                if (command === "execute_script") {
 
-                    gameClients.add(ws);
-                    ws.clientType = "game";
+                    broadcastExecutors("execute_script", {
+                        script: data.script
+                    });
 
-                    console.log("[GAME CLIENT CONNECTED]");
-                    console.log("Clients:", gameClients.size);
+                    send(ws, "log", {
+                        message: "Script enviado para executores"
+                    });
 
                 }
 
-            break;
+                break;
+            }
 
+            // executor retorna log
+            case "remote_log": {
 
-            // ======================
-            // COMMAND FROM DASHBOARD
-            // ======================
+                broadcastDashboards("remote_log", data);
+                break;
 
-            case "command":
+            }
 
-                console.log("[COMMAND RECEIVED FROM DASHBOARD]");
-                console.log(msg);
+            // executor retorna resultado
+            case "execution_result": {
 
-                gameClients.forEach(client => {
+                broadcastDashboards("execution_result", data);
+                break;
 
-                    if (client.readyState === WebSocket.OPEN) {
+            }
 
-                        console.log("[FORWARDING COMMAND TO GAME CLIENT]");
+            // executor envia lista players
+            case "players": {
 
-                        client.send(JSON.stringify({
-                            type: "execute",
-                            command: msg.command,
-                            data: msg.data || {}
-                        }));
+                broadcastDashboards("players", data);
+                break;
 
-                    }
-
-                });
-
-            break;
-
-
-            // ======================
-            // PLAYERS UPDATE
-            // ======================
-
-            case "players":
-
-                console.log("[PLAYERS UPDATE FROM CLIENT]");
-                console.log(msg.data);
-
-                dashboardClients.forEach(client => {
-
-                    if (client.readyState === WebSocket.OPEN) {
-
-                        client.send(JSON.stringify(msg));
-
-                    }
-
-                });
-
-            break;
-
-
-            // ======================
-            // EXECUTION RESULT
-            // ======================
-
-            case "execution_result":
-
-                console.log("[SCRIPT RESULT]");
-                console.log(msg.data);
-
-                dashboardClients.forEach(client => {
-
-                    if (client.readyState === WebSocket.OPEN) {
-
-                        client.send(JSON.stringify(msg));
-
-                    }
-
-                });
-
-            break;
-
-
-            // ======================
-            // LOG
-            // ======================
-
-            case "log":
-
-                console.log("[CLIENT LOG]");
-                console.log(msg.data);
-
-                dashboardClients.forEach(client => {
-
-                    if (client.readyState === WebSocket.OPEN) {
-
-                        client.send(JSON.stringify(msg));
-
-                    }
-
-                });
-
-            break;
-
-
-            default:
-
-                console.log("[UNKNOWN MESSAGE TYPE]");
-                console.log(msg);
+            }
 
         }
 
     });
 
-
     ws.on("close", () => {
 
-        console.log("\n[CONNECTION CLOSED]");
+        if (ws.role === "dashboard") {
+            dashboards.delete(ws);
+        }
 
-        dashboardClients.delete(ws);
-        gameClients.delete(ws);
+        if (ws.role === "executor") {
+            executors.delete(ws);
 
-        console.log("Dashboards:", dashboardClients.size);
-        console.log("Clients:", gameClients.size);
+            broadcastDashboards("status", {
+                connectedExecutors: executors.size
+            });
+        }
 
+        console.log("❌ Conexão fechada");
     });
-
-
-    ws.on("error", (err) => {
-
-        console.log("[SOCKET ERROR]");
-        console.log(err);
-
-    });
-
-});
-
-app.get("/", (req,res)=>{
-
-    res.send("Scarlet Debug Server Online");
 
 });
 
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-
-    console.log("\nServer rodando na porta:", PORT);
+    console.log("🚀 WebSocket server rodando na porta", PORT);
 });
