@@ -17,11 +17,11 @@ function send(ws, type, data = {}) {
     }
 }
 
-function broadcastExecutors(type, data) {
+function broadcastExecutors(type, data = {}) {
     executors.forEach(ws => send(ws, type, data));
 }
 
-function broadcastDashboards(type, data) {
+function broadcastDashboards(type, data = {}) {
     dashboards.forEach(ws => send(ws, type, data));
 }
 
@@ -46,7 +46,9 @@ wss.on("connection", (ws) => {
 
         switch (type) {
 
-            // Dashboard autentica
+            // =============================
+            // Dashboard autenticação
+            // =============================
             case "auth": {
 
                 ws.role = "dashboard";
@@ -61,7 +63,9 @@ wss.on("connection", (ws) => {
                 break;
             }
 
-            // Executor Roblox identifica
+            // =============================
+            // Executor Roblox conecta
+            // =============================
             case "identify": {
 
                 ws.role = "executor";
@@ -76,7 +80,9 @@ wss.on("connection", (ws) => {
                 break;
             }
 
-            // comandos do dashboard
+            // =============================
+            // Comandos do Dashboard
+            // =============================
             case "command": {
 
                 const command = data?.command;
@@ -108,7 +114,9 @@ wss.on("connection", (ws) => {
                 break;
             }
 
-            // executor retorna log
+            // =============================
+            // Logs do executor
+            // =============================
             case "remote_log": {
 
                 broadcastDashboards("remote_log", data);
@@ -116,7 +124,9 @@ wss.on("connection", (ws) => {
 
             }
 
-            // executor retorna resultado
+            // =============================
+            // Resultado de execução
+            // =============================
             case "execution_result": {
 
                 broadcastDashboards("execution_result", data);
@@ -124,7 +134,9 @@ wss.on("connection", (ws) => {
 
             }
 
-            // executor envia lista players
+            // =============================
+            // Lista de players
+            // =============================
             case "players": {
 
                 broadcastDashboards("players", data);
@@ -132,6 +144,8 @@ wss.on("connection", (ws) => {
 
             }
 
+            default:
+                console.log("❓ Tipo desconhecido:", type);
         }
 
     });
